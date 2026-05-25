@@ -467,11 +467,11 @@ def getEnergyDecomposition(handle, context, system):
     return results
 
 ##################################### MAIN #######################################
-## 主程序执行入口，根据上面构造的“物理常数数据字典”和“拓扑构建工具”， 将一个真实的、包含成千上万个原子的 PDB 文件，“降维压缩”成一个只剩主链和侧链珠子的粗粒化（CG）模型，
+# 主程序执行入口，根据上面构造的“物理常数数据字典”和“拓扑构建工具”， 将一个真实的、包含成千上万个原子的 PDB 文件，“降维压缩”成一个只剩主链和侧链珠子的粗粒化（CG）模型，
 # 并根据 Go 模型（Go-model）的理论体系，寻找出维持这个蛋白质三维结构的关键力量（如原生接触和氢键），最后把这些规则全部写进模拟器能看懂的参数文件中。
-ctrlfile = ''
 
-### 解析参数与环境检查 (Initialization)
+## 解析参数与环境检查 (Initialization)
+ctrlfile = '' # # 初始化一个空字符串，准备用来存放控制文件 (.ctrl) 的名字。该控制文件为调用本 .py 文件时候从外部手写创建（例如在 colab 中）
 if len(sys.argv) == 1:
     print(usage)
     sys.exit()
@@ -489,6 +489,7 @@ for opt, arg in opts:
         ctrlfile = arg
 
 ## Check dependency installation ##
+# 粗粒化建模需要分析蛋白质的氢键和二级结构，这依赖于一个外部的 C 语言程序 stride
 if os.popen('stride 2>&1').readlines()[0].strip().endswith('command not found'):
     print('Error: Essential software "stride" is not installed.\nPlease install stride before coarse-graining.')
     sys.exit()
