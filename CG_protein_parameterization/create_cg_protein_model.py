@@ -1,3 +1,5 @@
+# Coarse-Grained (粗粒化) 蛋白质模型，这是一种通过简化原子细节来加速计算机模拟的分子建模方法
+
 #!/usr/bin/env python3
 try:
     from openmm.app import *
@@ -14,13 +16,17 @@ import numpy as np
 
 sys.setrecursionlimit(int(1e6))
 
+# 这部分将一个多行字符串赋值给了变量 usage。当用户在命令行（终端）中输入了错误的参数，或者主动输入了 -h 获取帮助时，程序通常会 print(usage) 把这段话打印到屏幕上
 usage = '\nUsage: create_cg_protein_model.py\n' \
         '       --ctrlfile | -f <model.ctrl> Control file for creating cg protein model\n'\
         '       [--help | -h] Print this information\n\n'\
 
 ######################## Data #########################
+# 因为粗粒化（CG）模型去掉了真实的原子细节（把氨基酸简化成了几个“珠子”），所以程序必须有一套硬编码的标准参数，
+# 来告诉计算机每种氨基酸变成“珠子”后，它的质量、电荷、大小以及空间几何位置应该是怎样的
+
 ## Loop-up table for uniquely indentifying residues #
-aa = ["GLY","ALA","VAL","LEU","ILE","MET","PHE","PRO","SER","THR","CYS","ASN","GLN","TYR","TRP","ASP","GLU","HIS","LYS","ARG"]
+aa = ["GLY","ALA","VAL","LEU","ILE","MET","PHE","PRO","SER","THR","CYS","ASN","GLN","TYR","TRP","ASP","GLU","HIS","LYS","ARG"] # 20种标准氨基酸索引
 if len(aa) != 20:
     print('ERROR')
     sys.exit()
@@ -30,6 +36,7 @@ for i, a in enumerate(aa):
     res2n[a] = i
     n2res[i] = a
 
+# 常见重原子的标准原子质量
 Mass = {"N": 14.0067,
         "H": 1.00794,
         "C": 12.011,
@@ -37,6 +44,7 @@ Mass = {"N": 14.0067,
         "S": 32.06,}
 
 # number of heavy atoms in sidechains
+# 每种氨基酸侧链包含的重原子（碳、氮、氧、硫）数量。甘氨酸（GLY）没有侧链，所以是 0；色氨酸（TRP）侧链最大，所以是 10。
 refNscat = {"ALA": 1,
             "CYS": 2,
             "ASP": 4,
@@ -62,6 +70,7 @@ refNscat = {"ALA": 1,
             "TYR": 8}
 
 # charges on side chains at pH 7
+# 在中性环境（pH 7）下各氨基酸侧链的净电荷。例如天冬氨酸（ASP）是 -1.0，赖氨酸（LYS）是 1.0。这对计算静电相互作用非常关键。
 refcharge = {"ALA": 0.0,
              "CYS": 0.0,
              "ASP": -1.0,
@@ -86,7 +95,9 @@ refcharge = {"ALA": 0.0,
              "TRP": 0.0,
              "TYR": 0.0}
 
-# Generic C_alpha side-chain center of mass distance
+## 空间几何与体积参数
+# Generic C_alpha side-chain center of mass distance 
+# 侧链键长（Length of Bond Sidechain）。即主链 C_\alpha 珠子与侧链质心珠子之间的标准距离
 lbs_nongo = {"ASP": 2.46916481058687,
              "PRO": 1.87381801537346,
              "LYS": 3.49738414814426,
@@ -110,6 +121,8 @@ lbs_nongo = {"ASP": 2.46916481058687,
              "HIS": 3.15209719417679,
              "HSE": 3.15209719417679}
 
+# 异常二面角（Improper Dihedral）。由于粗粒化模型丢失了部分原子结构，极易发生“手性翻转”（比如本来是左手螺旋翻成了右手）。
+# 这个参数就像一个弹簧，用来把侧链固定在正确的三维手性空间里
 improper_nongo = {"ASP": 14.655341300544,
                   "PRO": 26.763068425539,
                   "LYS": 12.765248692601,
@@ -133,6 +146,7 @@ improper_nongo = {"ASP": 14.655341300544,
                   "HIS": 14.9962640689562,
                   "HSE": 14.9962640689562}
 
+# 侧链-主链（Sidechain-Backbone）。用于确定侧链珠子相对于主链骨架的伸展方向。
 ang_sb_nongo = {"ASP": 120.380153696218,
                 "PRO": 125.127927161651,
                 "LYS": 119.523270610009,
@@ -156,6 +170,7 @@ ang_sb_nongo = {"ASP": 120.380153696218,
                 "HIS": 116.815900172681,
                 "HSE": 116.815900172681}
 
+# 主链-侧链的键角
 ang_bs_nongo = {"ASP": 116.629356207687,
                 "PRO": 79.4932105625367,
                 "LYS": 119.779735484239,
@@ -185,7 +200,7 @@ segid2num = {}
 for nseg, letter in enumerate(alphabet):
     segid2num[letter] = nseg
     
-# mass of amino acids
+# mass of amino acids 氨基酸粗粒化侧链珠子的质量
 # UNSURE! about pro, arg, his and cys weights
 aaSCmass = {"ALA": 71.000000,
             "CYS": 114.000000,
@@ -211,7 +226,8 @@ aaSCmass = {"ALA": 71.000000,
             "TRP": 186.000000,
             "TYR": 163.000000}
 
-# vdw radius of sidechains
+# vdw radius of sidechains 
+# 范德华半径（Radius of Van der Waals）。代表每种氨基酸侧链“珠子”的物理大小/体积。碰撞计算时，如果两个珠子距离小于它们半径之和，就会产生强烈的排斥力。
 rvdw = {"ALA": 2.51958406732374,
         "CYS": 2.73823091624513,
         "ASP": 2.79030096923572,
@@ -236,20 +252,25 @@ rvdw = {"ALA": 2.51958406732374,
         "TRP": 3.38869998431408,
         "TYR": 3.22881842919248}
 
-######################### Functions ###########################
+######################### Functions ########################### 
+## 核心的拓扑构建与物理模拟模块。它依赖于两个计算化学 Python 库：ParmEd（用于处理分子拓扑结构）和 OpenMM（用于高性能分子动力学模拟）。
+
 # generate charmm .psf
+# 在分子动力学中，.psf（Protein Structure File）记录了分子的拓扑信息，即“谁和谁连在一起”。这个函数通过遍历氨基酸列表，将独立的“珠子”连接成链，并定义它们的键、键角、二面角等几何关系
 def create_psf(struct, ca_list, name):
-    # creat backbone bonds
+    # create backbone bonds 创建主链键
     for i in range(len(ca_list)-1):
         segid_list = [ca_list[i+j].residue.segid for j in range(2)]
         segid_list = list(set(segid_list))
         if len(segid_list) == 1:
             struct.bonds.append(pmd.topologyobjects.Bond(ca_list[i], ca_list[i+1]))
-    # creat backbone-sidechain bonds if exist
+            
+    # create backbone-sidechain bonds if exist 如果有侧链，创建主链-侧链键
     for ca_atom in ca_list:
         if len(ca_atom.residue.atoms) > 1:
             b_bead = ca_atom.residue.atoms[1]
             struct.bonds.append(pmd.topologyobjects.Bond(ca_atom, b_bead))
+            
     # create Angles
     for atm in struct.atoms:
         bond_list = atm.bond_partners
@@ -263,6 +284,7 @@ def create_psf(struct, ca_list, name):
         segid_list = list(set(segid_list))
         if len(segid_list) == 1:
             struct.dihedrals.append(pmd.topologyobjects.Dihedral(ca_list[i], ca_list[i+1], ca_list[i+2], ca_list[i+3]))
+            
     # create Impropers
     for i in range(1, len(ca_list)-1):
         segid_list = [ca_list[i+j-1].residue.segid for j in range(3)]
@@ -273,7 +295,8 @@ def create_psf(struct, ca_list, name):
     struct.save(name+'.psf', overwrite=True, vmd=False)
 # END generate charmm .psf
 
-# generate charmm .top
+# generate charmm .top 生成 CHARMM 拓扑参数文件
+# 生成的是一个 .top（拓扑）文件。它用纯文本形式记录了每个珠子的质量、电荷以及它们之间的内部连接方式，格式遵循经典力场 CHARMM 的规范
 def Create_rtf(struct, out_name):
     global pdbfile, casm
     fo = open(out_name+'.top', 'w')
@@ -315,10 +338,14 @@ def Create_rtf(struct, out_name):
     fo.close()
 # END generate charmm .top
 
+# 计算两个原子三维空间距离
 def calc_distance(atom_1, atom_2):
     dist = ((atom_1.xx - atom_2.xx)**2 + (atom_1.xy - atom_2.xy)**2 + (atom_1.xz - atom_2.xz)**2)**0.5
     return dist
 
+# 使用 OpenMM 进行能量最小化
+# 这是最关键的物理引擎模块。上面根据数学规则凭空生成的侧链位置可能不合理（比如两个原子发生了穿透重叠），这会导致系统产生无穷大的排斥力。
+# 这个函数在冻结主链的前提下，运行短暂的分子动力学模拟，让系统自己通过力场规则“松弛”到能量最低、最稳定的合理状态。
 def cg_energy_minimization(cor, prefix, prm_file):
     temp = 310
     np = '1'
@@ -406,6 +433,9 @@ def rm_cons_0_mass(system):
 # END remove bond constraints of 0 mass atoms
 
 # energy decomposition 
+# 能量拆解器
+# 系统的总势能是由化学键拉伸、键角弯曲、范德华碰撞等加起来的。这两个函数将系统中的各种力分类打上标签（Group），并分别结算输出每种力的能量大小，
+# 便于研究者 debug 模型问题（比如最小化前能量无穷大，看看是键断了还是发生碰撞了）。
 def forcegroupify(system):
     forcegroups = {}
     for i in range(system.getNumForces()):
@@ -437,8 +467,11 @@ def getEnergyDecomposition(handle, context, system):
     return results
 
 ##################################### MAIN #######################################
+## 主程序执行入口，根据上面构造的“物理常数数据字典”和“拓扑构建工具”， 将一个真实的、包含成千上万个原子的 PDB 文件，“降维压缩”成一个只剩主链和侧链珠子的粗粒化（CG）模型，
+# 并根据 Go 模型（Go-model）的理论体系，寻找出维持这个蛋白质三维结构的关键力量（如原生接触和氢键），最后把这些规则全部写进模拟器能看懂的参数文件中。
 ctrlfile = ''
 
+### 解析参数与环境检查 (Initialization)
 if len(sys.argv) == 1:
     print(usage)
     sys.exit()
@@ -717,6 +750,8 @@ resname_prefix = 'G'
 atomname_prefix = ''
         
 # Read PDB file
+# 核心降维：计算质心坐标 (Coarse-Graining Mapping)
+# 这是全原子模型向粗粒化模型转换的最核心物理过程。程序遍历 PDB 中的每一个氨基酸，扔掉具体的原子，用重心（Center of Mass, COM）来代替侧链。
 cg_structure = pmd.Structure()
 print("Reading in PDB file %s"%pdbfile)
 
@@ -858,6 +893,9 @@ for idx_1, atm_1 in enumerate(cg_structure.atoms):
 print("Finished calculating distance matrix")
 
 ## Compute native contacts between side-chains
+# Go 模型逻辑：寻找原生接触与氢键 (Native Contacts & STRIDE)
+# Go 模型的哲学是：“蛋白质之所以能折叠成这个特定的三维形状，是因为它在天然状态（Native State）下形成的化学键和相互作用是最稳定的。”
+# 因此，程序需要去原结构里寻找哪些氨基酸之间“本就贴在一起”，并给它们打上特殊标记，让它们在后续的模拟中具有强烈的相互吸引力。
 print("Determining side-chains - side-chains contacts")
 native_ss_map = np.zeros((len(cg_structure.residues), len(cg_structure.residues)))
 for i in range(len(cg_structure.residues)-3):
@@ -974,6 +1012,9 @@ for i in range(len(cg_structure.residues)):
             native_contact_map[j,i] = 1 # Force the native contact map symetric
 
 ## Write prm file ##
+# 输出 CHARMM 格式的参数文件 (Writing .prm File)
+# 最后一步，脚本将所有收集到的物理规则（原子属性、化学键长度、相互作用强弱）写入 .prm（Parameter）文件。这是给分子动力学引擎（如 OpenMM 或 NAMD）看的。
+
 print('\nCreate prm\n')
 prmfile = pdbfile.strip().split('/')[-1].split('.pdb')[0] + '_nscal' + nscal_0 + '_fnn' + fnn_0 + '_go_' + potential_name.lower() + '.prm'
 f = open(prmfile, 'w')
